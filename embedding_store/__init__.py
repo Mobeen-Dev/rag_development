@@ -1,0 +1,1 @@
+from .qdrant import embed_documents   # noqa: F401
