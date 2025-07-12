@@ -57,7 +57,7 @@ def create_opensearch_index(client: OpenSearch, index_name: str):
     }
 
     # Ignore 400 (bad request) if the index already exists
-    response = client.indices.create(index=index_name, body=index_body, ignore=400)
+    response = client.indices.create(index=index_name, body=index_body, ignore=400) # type: ignore
     if response.get('acknowledged'):
         print(f"Index '{index_name}' created successfully.")
     elif 'error' in response:
@@ -93,14 +93,15 @@ def index_documents_to_opensearch(client: OpenSearch, index_name: str, documents
         # Bulk index every 1000 documents or at the end
         if len(actions) % 1000 == 0 or i == len(documents) - 1:
             try:
-                response = client.bulk(body=actions, refresh=True)  # `refresh=True` makes data immediately searchable
+                response = client.bulk(body=actions, refresh=True)  # type: ignore # `refresh=True` makes data immediately searchable
 
                 # You can inspect failures like this:
                 if response['errors']:
                     failed_docs = [item for item in response['items'] if 'error' in item['index']]
                     print(f"⚠️ Failed to index {len(failed_docs)} documents. Example: {failed_docs[:2]}")
                 else:
-                    print(f"✅ Successfully indexed {len(actions)} documents.")
+                    # print(f"✅ Successfully indexed {len(actions)} documents.")
+                    pass
 
                 actions = [] # Reset actions list for the next batch
             except Exception as e:
@@ -109,21 +110,9 @@ def index_documents_to_opensearch(client: OpenSearch, index_name: str, documents
 
     print(f"Finished indexing process for index '{index_name}'.")
 
-if __name__ == "__main__":
-    # 1. Load and split CSV files
-    print("Loading and splitting CSV files...")
-    chunks = load_and_split_csv_files(
-        folder_path="Data",
-        file_prefix="products_export_",
-        file_range=range(1, 4), # Adjust if you have more or fewer files
-        record_chunk_size=1000,
-        record_chunk_overlap=100,
-        description_chunk_size=300,
-        description_chunk_overlap=50,
-    )
-    print(f"Total chunks generated: {len(chunks)}")
 
-    # 2. Initialize OpenSearch client
+def lexical_search_create(chunks, opensearch_index_name = "product_data_lexical"):
+    # Initialize OpenSearch client
     print("Initializing OpenSearch client...")
     opensearch_client = create_opensearch_client()
 
@@ -139,14 +128,11 @@ if __name__ == "__main__":
         print("Please ensure your OpenSearch Docker container is running and accessible.")
         exit()
 
-    # 3. Define your OpenSearch index name
-    opensearch_index_name = "product_data_lexical"
-
-    # 4. Create the OpenSearch index with desired mappings
+    # Create the OpenSearch index with desired mappings
     print(f"Creating OpenSearch index '{opensearch_index_name}'...")
     create_opensearch_index(opensearch_client, opensearch_index_name)
 
-    # 5. Index the loaded and split documents into OpenSearch
+    # Index the loaded and split documents into OpenSearch
     print(f"Indexing documents into '{opensearch_index_name}'...")
     index_documents_to_opensearch(opensearch_client, opensearch_index_name, chunks)
 

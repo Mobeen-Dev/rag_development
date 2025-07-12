@@ -3,5 +3,7 @@ pre_processing/__pycache__/DataPreparation.cpython-313.pyc
 venv
 .venv
 *.pyc
-DB
+DB/*
 dsfsd
+lexical_search_data/*
+__pycache__
