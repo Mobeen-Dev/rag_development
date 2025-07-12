@@ -16,14 +16,14 @@ def create_opensearch_client():
     # port = int(os.getenv('OPENSEARCH_PORT', 9200))
     port = 9200  # Default OpenSearch port
     
-    auth = ('admin', 'admin')  # Default credentials for OpenSearch Docker
+    auth = ('admin', 'fjkfh1471947y7T&^FV%D(&^T*')  # Default credentials for OpenSearch Docker
     
     # You might need to disable SSL verification for local self-signed certificates
     # In production, always use proper SSL/TLS and authentication.
     client = OpenSearch(
         hosts=[{'host': host, 'port': port}],
         http_auth=auth,
-        use_ssl=False,  # Use SSL if your Docker setup has it enabled (default for recent versions)
+        use_ssl=True,  # Use SSL if your Docker setup has it enabled (default for recent versions)
         verify_certs=False,  # Disable cert verification for local development (NOT for production)
         ssl_assert_hostname=False,
         ssl_show_warn=False,
@@ -87,12 +87,8 @@ def index_documents_to_opensearch(client: OpenSearch, index_name: str, documents
         **(doc.metadata or {})  # safely unpack
         }
         
-        action = {
-            "_index": index_name,
-            "_id": f"{index_name}_{i}", # Unique ID for each chunk
-            "_source": doc_body
-        }
-        actions.append(action)
+        actions.append({ "index": { "_index": index_name, "_id": f"{index_name}_{i}" } })
+        actions.append(doc_body)
 
         # Bulk index every 1000 documents or at the end
         if len(actions) % 1000 == 0 or i == len(documents) - 1:
