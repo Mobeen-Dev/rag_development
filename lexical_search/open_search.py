@@ -3,33 +3,66 @@ from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, RequestsHttpConnection
+import time
 
-def create_opensearch_client():
+def create_opensearch_client(use_ssl=False):
     """
     Creates and returns an OpenSearch client instance for a local Docker setup.
+    
+    Args:
+        use_ssl: Whether to use SSL for connection (default: False for local development)
+        
+    Returns:
+        OpenSearch client instance
     """
     # For a local Docker setup, default host and port are usually sufficient
+    host = os.getenv('OPENSEARCH_HOST', 'localhost')
+    port = int(os.getenv('OPENSEARCH_PORT', '9200'))
     
-    # host = os.getenv('OPENSEARCH_HOST', 'localhost')
-    host = 'localhost'
-    # port = int(os.getenv('OPENSEARCH_PORT', 9200))
-    port = 9200  # Default OpenSearch port
+    # Default credentials for OpenSearch Docker
+    auth = (os.getenv('OPENSEARCH_USER', 'admin'), 
+            os.getenv('OPENSEARCH_PASSWORD', 'fjkfh1471947y7T&^FV%D(&^T*'))
     
-    auth = ('admin', 'fjkfh1471947y7T&^FV%D(&^T*')  # Default credentials for OpenSearch Docker
+    # Connection settings - important for local development
+    connection_settings = {
+        'hosts': [{'host': host, 'port': port}],
+        'http_auth': auth,
+        'connection_class': RequestsHttpConnection,
+        'timeout': 30,  # Set a timeout for requests
+        'max_retries': 3,  # Add retries
+        'retry_on_timeout': True
+    }
     
-    # You might need to disable SSL verification for local self-signed certificates
-    # In production, always use proper SSL/TLS and authentication.
-    client = OpenSearch(
-        hosts=[{'host': host, 'port': port}],
-        http_auth=auth,
-        use_ssl=True,  # Use SSL if your Docker setup has it enabled (default for recent versions)
-        verify_certs=False,  # Disable cert verification for local development (NOT for production)
-        ssl_assert_hostname=False,
-        ssl_show_warn=False,
-        timeout=30 # Set a timeout for requests
-    )
-    return client
+    # Add SSL settings if enabled
+    if use_ssl:
+        connection_settings.update({
+            'use_ssl': True,
+            'verify_certs': False,  # Disable cert verification for local development
+            'ssl_assert_hostname': False,
+            'ssl_show_warn': False
+        })
+    
+    # Create client with try-except to handle connection issues
+    try:
+        client = OpenSearch(**connection_settings)
+        
+        # Test connection by making a simple request
+        client.info()
+        print(f"✅ Successfully connected to OpenSearch at {host}:{port}")
+        return client
+    
+    except Exception as e:
+        print(f"❌ Failed to connect to OpenSearch: {e}")
+        print("\nTroubleshooting tips:")
+        print("1. Ensure OpenSearch is running at the specified host and port")
+        print(f"2. Current connection settings: host={host}, port={port}, use_ssl={use_ssl}")
+        print("3. If using SSL, try with use_ssl=False for local development")
+        print("4. Check if authentication credentials are correct")
+        print("5. Verify network connectivity to the OpenSearch instance")
+        
+        # Re-raise exception to allow caller to handle it
+        raise
 
 def create_opensearch_index(client: OpenSearch, index_name: str):
     """
@@ -39,9 +72,9 @@ def create_opensearch_index(client: OpenSearch, index_name: str):
         "settings": {
             "analysis": {
                 "analyzer": {
-                    "default": { # Using "default" analyzer for simplicity, applies to all text fields
+                    "default": {  # Using "default" analyzer for simplicity
                         "type": "standard",
-                        "stopwords": "english" # Example: remove common English stopwords
+                        "stopwords": "english"  # Remove common English stopwords
                     }
                 }
             }
@@ -49,20 +82,29 @@ def create_opensearch_index(client: OpenSearch, index_name: str):
         "mappings": {
             "properties": {
                 "page_content": {"type": "text"},
-                "source": {"type": "keyword"}, # For metadata like file path
-                "row": {"type": "long"}, # For metadata like row number
+                "source": {"type": "keyword"},  # For metadata like file path
+                "row": {"type": "long"},  # For metadata like row number
                 # Add other metadata fields from your chunks if they are present
             }
         }
     }
-    # Ignore 400 (bad request) if the index already exists
-    response = client.indices.create(index=index_name, body=index_body, ignore=400) # type: ignore
-    if response.get('acknowledged'):
-        print(f"Index '{index_name}' created successfully.")
-    elif 'error' in response:
-        print(f"Error creating index '{index_name}': {response['error']['reason']}")
-    else:
-        print(f"Index '{index_name}' already exists or unknown response.")
+    
+    try:
+        # Check if index exists
+        if client.indices.exists(index=index_name):
+            print(f"Index '{index_name}' already exists.")
+            return
+        
+        # Create index
+        response = client.indices.create(index=index_name, body=index_body)
+        if response.get('acknowledged'):
+            print(f"Index '{index_name}' created successfully.")
+        else:
+            print(f"Unexpected response when creating index '{index_name}': {response}")
+    
+    except Exception as e:
+        print(f"Error creating index '{index_name}': {str(e)}")
+        raise
 
 def index_documents_to_opensearch(client: OpenSearch, index_name: str, documents: list):
     """
@@ -71,37 +113,49 @@ def index_documents_to_opensearch(client: OpenSearch, index_name: str, documents
     if not documents:
         print("No documents to index.")
         return
+    
     print(f"Attempting to index {len(documents)} documents into OpenSearch index '{index_name}'...")
     
     # Batch indexing for efficiency
     actions = []
+    indexed_count = 0
+    failed_count = 0
+    
     for i, doc in enumerate(documents):
-        # The _id for each document should be unique.
-        # LangChain documents have page_content and metadata.
-        # You might want to include all metadata fields in the document source.
+        # Create document body
         doc_body = {
-        "page_content": doc.page_content,
-        **(doc.metadata or {})  # safely unpack
+            "page_content": doc.page_content,
+            **(doc.metadata or {})  # safely unpack
         }
         
-        actions.append({ "index": { "_index": index_name, "_id": f"{index_name}_{i}" } })
+        actions.append({"index": {"_index": index_name, "_id": f"{index_name}_{i}"}})
         actions.append(doc_body)
+        
         # Bulk index every 1000 documents or at the end
-        if len(actions) % 1000 == 0 or i == len(documents) - 1:
+        if len(actions) >= 1000 or i == len(documents) - 1:
             try:
-                response = client.bulk(body=actions, refresh=True)  # type: ignore # `refresh=True` makes data immediately searchable
-                # You can inspect failures like this:
+                response = client.bulk(body=actions, refresh=True) # type: ignore
+                
+                # Check for errors
                 if response['errors']:
-                    failed_docs = [item for item in response['items'] if 'error' in item['index']]
-                    print(f"⚠️ Failed to index {len(failed_docs)} documents. Example: {failed_docs[:2]}")
+                    failed_items = [item for item in response['items'] if 'error' in item['index']]
+                    failed_count += len(failed_items)
+                    print(f"⚠️ Failed to index {len(failed_items)} documents in batch.")
                 else:
-                    # print(f"✅ Successfully indexed {len(actions)} documents.")
-                    pass
-                actions = [] # Reset actions list for the next batch
+                    indexed_count += len(actions) // 2  # Divide by 2 because actions include both index commands and documents
+                
+                # Reset actions list for the next batch
+                actions = []
+                
+                # Add a small delay to avoid overwhelming the server
+                time.sleep(0.1)
+                
             except Exception as e:
                 print(f"Bulk indexing failed: {e}")
-                actions = [] # Clear actions to prevent re-attempting failed batch
-    print(f"Finished indexing process for index '{index_name}'.")
+                failed_count += len(actions) // 2
+                actions = []  # Clear actions to prevent re-attempting failed batch
+    
+    print(f"Indexing complete: {indexed_count} documents indexed, {failed_count} failed.")
 
 def opensearch_retriever(
     client: OpenSearch,
@@ -124,7 +178,7 @@ def opensearch_retriever(
         List of LangChain Document objects
     """
     # Default to searching in page_content if no fields are specified
-    if not fields:
+    if not fields :
         fields = ["page_content"]
     
     # Build the search query
@@ -175,6 +229,11 @@ class OpenSearchRetriever(BaseRetriever):
     """
     LangChain-compatible retriever for OpenSearch.
     """
+    # Define class-level fields for Pydantic
+    client: Any = None
+    index_name: str = "product_data_lexical"
+    k: int = 10
+    fields: List[str] = []  # This will be properly initialized in __init__
     
     def __init__(
         self,
@@ -193,10 +252,12 @@ class OpenSearchRetriever(BaseRetriever):
             fields: List of fields to search in (default: ["page_content"])
         """
         super().__init__()
-        self.client = client
-        self.index_name = index_name
-        self.k = k
-        self.fields = fields if fields else ["page_content"]
+        
+        # Use object.__setattr__ to bypass Pydantic validation
+        object.__setattr__(self, "client", client)
+        object.__setattr__(self, "index_name", index_name)
+        object.__setattr__(self, "k", k)
+        object.__setattr__(self, "fields", fields if fields else ["page_content"])
     
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
@@ -219,19 +280,20 @@ class OpenSearchRetriever(BaseRetriever):
             fields=self.fields
         )
 
-def lexical_search_create(chunks, opensearch_index_name="product_data_lexical"):
+def lexical_search_create(chunks, opensearch_index_name="product_data_lexical", use_ssl=False):
     """
     Create OpenSearch index and index documents for lexical search.
     
     Args:
         chunks: List of documents to index
         opensearch_index_name: Name of the OpenSearch index
+        use_ssl: Whether to use SSL for connection (default: False for local development)
         
     Returns:
         OpenSearch client instance
     """
     # Create OpenSearch client
-    client = create_opensearch_client()
+    client = create_opensearch_client(use_ssl=use_ssl)
     
     # Create index if it doesn't exist
     create_opensearch_index(client, opensearch_index_name)
@@ -245,7 +307,8 @@ def create_opensearch_retriever(
     client: Optional[OpenSearch] = None,
     index_name: str = "product_data_lexical",
     k: int = 10,
-    fields: List[str] = []
+    fields: List[str] = [],
+    use_ssl: bool = False
 ) -> OpenSearchRetriever:
     """
     Create an OpenSearch retriever.
@@ -255,12 +318,13 @@ def create_opensearch_retriever(
         index_name: Name of the OpenSearch index
         k: Number of documents to retrieve (default: 10)
         fields: List of fields to search in (default: ["page_content"])
+        use_ssl: Whether to use SSL when creating a new client (default: False)
         
     Returns:
         OpenSearch retriever
     """
     if client is None:
-        client = create_opensearch_client()
+        client = create_opensearch_client(use_ssl=use_ssl)
         
     return OpenSearchRetriever(
         client=client,
@@ -271,28 +335,34 @@ def create_opensearch_retriever(
 
 # Example usage
 if __name__ == "__main__":
-    from pre_processing import load_and_split_csv_files
+    # Example documents
+    documents = [
+        Document(page_content="OpenSearch is a distributed search engine", metadata={"source": "docs"}),
+        Document(page_content="Vector search enables semantic search capabilities", metadata={"source": "blog"})
+    ]
     
-    # Load and split documents
-    documents = load_and_split_csv_files()
-    
-    # Create OpenSearch client and index documents
-    client = lexical_search_create(documents)
-    
-    # Create retriever
-    retriever = create_opensearch_retriever(
-        client=client,
-        index_name="product_data_lexical",
-        k=5
-    )
-    
-    # Perform a search
-    query = "What are the best colrful LEDs ?"
-    results = retriever.invoke(query)
-    
-    # Print results
-    print(f"Top {len(results)} results for query: '{query}'")
-    for i, doc in enumerate(results):
-        print(f"\n--- Result {i+1} ---")
-        print(f"Content: {doc.page_content[:150]}...")
-        print(f"Source: {doc.metadata.get('source', 'Unknown')}")
+    try:
+        # Try to create a client and index documents without SSL first
+        client = lexical_search_create(documents, use_ssl=False)
+        
+        # Create retriever
+        retriever = create_opensearch_retriever(
+            client=client,
+            index_name="product_data_lexical",
+            k=5
+        )
+        
+        # Perform a search
+        query = "What is a search engine?"
+        results = retriever.get_relevant_documents(query)
+        
+        # Print results
+        print(f"Top {len(results)} results for query: '{query}'")
+        for i, doc in enumerate(results):
+            print(f"\n--- Result {i+1} ---")
+            print(f"Content: {doc.page_content}")
+            print(f"Score: {doc.metadata.get('score')}")
+            
+    except Exception as e:
+        print(f"Error in example: {e}")
+        print("Try running with different connection settings.")

@@ -1,1 +1,1 @@
-from .open_search import lexical_search_create
+from .open_search import create_opensearch_retriever, lexical_search_create, create_opensearch_client

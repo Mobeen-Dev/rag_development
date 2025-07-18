@@ -13,6 +13,11 @@
     sudo docker pull opensearchproject/opensearch:3
     sudo docker pull opensearchproject/opensearch-dashboards:3
 
+    
+# Create directory with proper permissions
+sudo chown 1000:1000 lexical_search_data
+sudo chmod 777 lexical_search_data
+
 # Image Startup 
     sudo docker run -p 6333:6333 -p 6334:6334  -v "./DB:/qdrant/storage:z"  qdrant/qdrant
     sudo docker run -d -p 9200:9200 -p 9600:9600 -e "discovery.type=single-node" -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=fjkfh1471947y7T&^FV%D(&^T*"  -v ./lexical_search_data:/usr/share/opensearch/data opensearchproject/opensearch:latest # id:pass = admin:admin (Development Only)
