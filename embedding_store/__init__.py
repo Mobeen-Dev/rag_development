@@ -1,1 +1,1 @@
-from .qdrant import embed_documents   # noqa: F401
+from .qdrant import embed_documents, QdrantRetriever   # noqa: F401
