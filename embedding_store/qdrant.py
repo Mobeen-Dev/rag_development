@@ -24,7 +24,7 @@ def create_collection_if_not_exists(collection_name: str, vector_size: int = 384
         vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
     )
 
-def embed_documents(docs: List[Document], collection_name: str = "rag_collection", batch_size: int = 100):
+def embed_documents(docs: List[Document], collection_name: str = "product_chunks", batch_size: int = 100):
     """
     Converts documents into embeddings and stores them in a local Qdrant collection.
     """
@@ -82,7 +82,7 @@ def retrieve_documents(
         query_vector=query_embedding.tolist(),
         limit=limit,
         score_threshold=score_threshold,
-        filter=filter_condition
+        # filter=filter_condition
     )
     
     # Convert to LangChain Documents
@@ -141,6 +141,12 @@ class QdrantRetriever(BaseRetriever):
     """
     LangChain-compatible retriever for Qdrant vector database.
     """
+    collection_name: str = "rag_collection"
+    limit: int = 10
+    score_threshold: Optional[float] = None
+    metadata_filter: Optional[Dict[str, Any]] = None
+    client: Any = None
+    embedding_model: Any = None
     
     def __init__(
         self,
@@ -162,13 +168,16 @@ class QdrantRetriever(BaseRetriever):
             embedding_model: Custom embedding model (defaults to global model)
             qdrant_client: Custom Qdrant client (defaults to global client)
         """
+        # Call parent class initializer with properly named parameters
         super().__init__()
-        self.collection_name = collection_name
-        self.limit = limit
-        self.score_threshold = score_threshold
-        self.metadata_filter = metadata_filter
-        self.embedding_model = embedding_model or model
-        self.client = qdrant_client or client
+        
+        # Set attributes directly to bypass Pydantic validation during initialization
+        object.__setattr__(self, "collection_name", collection_name)
+        object.__setattr__(self, "limit", limit)
+        object.__setattr__(self, "score_threshold", score_threshold)
+        object.__setattr__(self, "metadata_filter", metadata_filter)
+        object.__setattr__(self, "embedding_model", embedding_model or model)
+        object.__setattr__(self, "client", qdrant_client or client)
     
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
@@ -196,23 +205,24 @@ class QdrantRetriever(BaseRetriever):
             score_threshold=self.score_threshold,
             filter_condition=filter_condition
         )
-
+    
 # Example usage
 if __name__ == "__main__":
     # Sample documents
-    documents = [
-        Document(page_content="Qdrant is a vector database for AI applications", metadata={"source": "docs"}),
-        Document(page_content="Vector databases store embeddings for semantic search", metadata={"source": "docs"}),
-        Document(page_content="LangChain provides tools for building LLM applications", metadata={"source": "blog"})
-    ]
+
+    # documents = [
+    #     Document(page_content="Control stepper motors for precise and accurate cutting and engraving"),
+    #     Document(page_content="Vector databases store embeddings for semantic search", metadata={"source": "docs"}),
+    #     Document(page_content="LangChain provides tools for building LLM applications", metadata={"source": "blog"})
+    # ]
     
-    # Index documents
-    embed_documents(documents)
+    # # Index documents
+    # embed_documents(documents)
     
     # Option 1: Use the standalone retrieve_documents function
     results = retrieve_documents(
-        query="How do vector databases work?",
-        limit=2
+        query="esp for communication",
+        limit=5
     )
     
     print("\nResults using retrieve_documents function:")
@@ -223,7 +233,7 @@ if __name__ == "__main__":
     
     # Option 2: Use the LangChain-compatible QdrantRetriever
     retriever = QdrantRetriever(
-        collection_name="rag_collection",
+        collection_name="product_chunks",
         limit=2,
         metadata_filter={"source": "docs"}
     )
